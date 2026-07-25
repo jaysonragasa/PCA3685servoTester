@@ -230,7 +230,7 @@ void setup() {
   Serial.begin(115200);
 
   // Initialize I2C pins D21=SDA, D22=SCL
-  Wire.begin(21, 22);
+  Wire.begin(6, 7);
 
   // Initialize OLED
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
