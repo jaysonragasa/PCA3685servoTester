@@ -32,6 +32,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // Store last command to display
 int lastServo = -1;
 int lastAngle = 90;
+int servoMinUs[16] = {500,500,500,500,500,500,500,500,500,500,500,500,500,500,500,500};
+int servoMaxUs[16] = {2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400};
 
 // HTML content for the modern web UI
 const char index_html[] PROGMEM = R"rawliteral(
@@ -57,6 +59,12 @@ const char index_html[] PROGMEM = R"rawliteral(
     .btn { background-color: #333; color: #e0e0e0; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: background 0.2s, transform 0.1s; font-size: 0.9rem; }
     .btn:hover { background-color: #03dac6; color: #121212; transform: translateY(-2px); }
     .btn:active { transform: translateY(0); }
+    .mode-toggle { display: flex; justify-content: center; gap: 10px; margin-bottom: 15px; }
+    .mode-btn { background-color: #333; color: #888; border: 1px solid #444; padding: 5px 15px; border-radius: 15px; cursor: pointer; font-size: 0.8rem; transition: 0.2s; }
+    .mode-btn.active { background-color: #bb86fc; color: #121212; border-color: #bb86fc; font-weight: bold; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .cal-label { font-size: 0.8rem; color: #888; text-align: left; margin-top: 10px; }
   </style>
   <script>
     var lastSendTime = 0;
@@ -98,6 +106,62 @@ const char index_html[] PROGMEM = R"rawliteral(
       if (newVal > 180) newVal = 180;
       setAngle(servoId, newVal);
     }
+    
+    function toggleMode(servoId, mode) {
+      document.getElementById("btn-angle-" + servoId).classList.remove("active");
+      document.getElementById("btn-cal-" + servoId).classList.remove("active");
+      document.getElementById("panel-angle-" + servoId).classList.remove("active");
+      document.getElementById("panel-cal-" + servoId).classList.remove("active");
+      document.getElementById("btn-" + mode + "-" + servoId).classList.add("active");
+      document.getElementById("panel-" + mode + "-" + servoId).classList.add("active");
+    }
+    
+    function updateUs(servoId, type) {
+      var slider = document.getElementById(type + "Slider" + servoId);
+      var val = slider.value;
+      document.getElementById(type + "Val" + servoId).value = val;
+      var now = Date.now();
+      if (now - lastSendTime > 50) {
+        sendUsRequest(servoId, val);
+      } else {
+        clearTimeout(pendingRequest);
+        pendingRequest = setTimeout(function() { sendUsRequest(servoId, val); }, 50);
+      }
+    }
+    
+    function sendUsRequest(servoId, val) {
+      lastSendTime = Date.now();
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/setUs?servo=" + servoId + "&us=" + val, true);
+      xhr.send();
+    }
+
+    function stepUs(servoId, type, amount) {
+      var slider = document.getElementById(type + "Slider" + servoId);
+      var newVal = parseInt(slider.value) + amount;
+      var minLimit = parseInt(slider.min);
+      var maxLimit = parseInt(slider.max);
+      if (newVal < minLimit) newVal = minLimit;
+      if (newVal > maxLimit) newVal = maxLimit;
+      slider.value = newVal;
+      updateUs(servoId, type);
+    }
+    
+    function setUsDirect(servoId, type, val) {
+      var slider = document.getElementById(type + "Slider" + servoId);
+      slider.value = val;
+      updateUs(servoId, type);
+    }
+    
+    function saveCalibration(servoId) {
+      var minUs = document.getElementById("minSlider" + servoId).value;
+      var maxUs = document.getElementById("maxSlider" + servoId).value;
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/calibrate?servo=" + servoId + "&minUs=" + minUs + "&maxUs=" + maxUs, true);
+      xhr.send();
+      toggleMode(servoId, 'angle');
+      updateServo(servoId);
+    }
   </script>
 </head>
 <body>
@@ -111,10 +175,17 @@ void handleRoot() {
   // Generate 16 servo sliders dynamically
   for (int i = 0; i < 16; i++) {
     String id = String(i);
+    int currentMin = servoMinUs[i];
+    int currentMax = servoMaxUs[i];
     html += "<div class=\"card\"><h2>Servo " + id + "</h2>";
-    // oninput updates both the text and fires the real-time API call (throttled)
-    html += "<input type=\"range\" min=\"0\" max=\"180\" value=\"90\" class=\"slider\" id=\"slider" + id + "\" oninput=\"updateServo(" + id + ")\">";
     
+    html += "<div class=\"mode-toggle\">";
+    html += "<button id=\"btn-angle-" + id + "\" class=\"mode-btn active\" onclick=\"toggleMode(" + id + ", 'angle')\">Angle</button>";
+    html += "<button id=\"btn-cal-" + id + "\" class=\"mode-btn\" onclick=\"toggleMode(" + id + ", 'cal')\">Calibrate</button>";
+    html += "</div>";
+
+    html += "<div id=\"panel-angle-" + id + "\" class=\"panel active\">";
+    html += "<input type=\"range\" min=\"0\" max=\"180\" value=\"90\" class=\"slider\" id=\"slider" + id + "\" oninput=\"updateServo(" + id + ")\">";
     html += "<div class=\"step-group\">";
     html += "<button class=\"btn\" onclick=\"stepAngle(" + id + ", -5)\">&lt;&lt;</button>";
     html += "<button class=\"btn\" onclick=\"stepAngle(" + id + ", -1)\">&lt;</button>";
@@ -122,13 +193,36 @@ void handleRoot() {
     html += "<button class=\"btn\" onclick=\"stepAngle(" + id + ", 1)\">&gt;</button>";
     html += "<button class=\"btn\" onclick=\"stepAngle(" + id + ", 5)\">&gt;&gt;</button>";
     html += "</div>";
-    
     html += "<div class=\"btn-group\">";
     html += "<button class=\"btn\" onclick=\"setAngle(" + id + ", 0)\">0&deg;</button>";
     html += "<button class=\"btn\" onclick=\"setAngle(" + id + ", 45)\">45&deg;</button>";
     html += "<button class=\"btn\" onclick=\"setAngle(" + id + ", 90)\">90&deg;</button>";
     html += "<button class=\"btn\" onclick=\"setAngle(" + id + ", 135)\">135&deg;</button>";
     html += "<button class=\"btn\" onclick=\"setAngle(" + id + ", 180)\">180&deg;</button>";
+    html += "</div></div>";
+
+    html += "<div id=\"panel-cal-" + id + "\" class=\"panel\">";
+    html += "<div class=\"cal-label\">Min Pulse (us) - 0&deg;</div>";
+    html += "<input type=\"range\" min=\"400\" max=\"1000\" value=\"" + String(currentMin) + "\" class=\"slider\" id=\"minSlider" + id + "\" oninput=\"updateUs(" + id + ", 'min')\">";
+    html += "<div class=\"step-group\">";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'min', -10)\">&lt;&lt;</button>";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'min', -1)\">&lt;</button>";
+    html += "<input type=\"number\" min=\"400\" max=\"1000\" class=\"value-input\" id=\"minVal" + id + "\" value=\"" + String(currentMin) + "\" onchange=\"setUsDirect(" + id + ", 'min', this.value)\">";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'min', 1)\">&gt;</button>";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'min', 10)\">&gt;&gt;</button>";
+    html += "</div>";
+    
+    html += "<div class=\"cal-label\">Max Pulse (us) - 180&deg;</div>";
+    html += "<input type=\"range\" min=\"2000\" max=\"3000\" value=\"" + String(currentMax) + "\" class=\"slider\" id=\"maxSlider" + id + "\" oninput=\"updateUs(" + id + ", 'max')\">";
+    html += "<div class=\"step-group\">";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'max', -10)\">&lt;&lt;</button>";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'max', -1)\">&lt;</button>";
+    html += "<input type=\"number\" min=\"2000\" max=\"3000\" class=\"value-input\" id=\"maxVal" + id + "\" value=\"" + String(currentMax) + "\" onchange=\"setUsDirect(" + id + ", 'max', this.value)\">";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'max', 1)\">&gt;</button>";
+    html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'max', 10)\">&gt;&gt;</button>";
+    html += "</div>";
+    
+    html += "<button class=\"btn\" style=\"width: 100%; margin-top: 10px; background-color: #03dac6; color: #121212;\" onclick=\"saveCalibration(" + id + ")\">Save Calibration</button>";
     html += "</div></div>";
   }
   
@@ -166,8 +260,12 @@ void updateDisplay() {
     
     // Right align the angle
     display.setCursor(76, 16);
-    display.print(lastAngle);
-    display.print((char)247); // degree symbol
+    if (lastAngle == -1) {
+      display.print("CAL");
+    } else {
+      display.print(lastAngle);
+      display.print((char)247); // degree symbol
+    }
     
     // Draw Gauge
     int cx = 64; // Center x
@@ -203,6 +301,51 @@ void updateDisplay() {
   display.display();
 }
 
+void setCalibratedAngle(uint8_t channel, float angle) {
+  int minUs = servoMinUs[channel];  
+  int maxUs = servoMaxUs[channel]; 
+
+  // Constrain the incoming angle strictly between 0.0 and 180.0
+  angle = fmax(0.0f, fmin(180.0f, angle));
+
+  // Precise float mapping to microseconds
+  int pulseUs = (int)(angle * (maxUs - minUs) / 180.0f + minUs);
+
+  // Send precise timings to PCA9685
+  pwm.writeMicroseconds(channel, pulseUs);
+}
+
+void handleSetUs() {
+  if (server.hasArg("servo") && server.hasArg("us")) {
+    int servoNum = server.arg("servo").toInt();
+    int us = server.arg("us").toInt();
+    if (servoNum >= 0 && servoNum < 16 && us >= 0 && us <= 5000) {
+      pwm.writeMicroseconds(servoNum, us);
+      lastServo = servoNum;
+      lastAngle = -1; // Indicate CAL mode on OLED
+      updateDisplay();
+      server.send(200, "text/plain", "OK");
+      return;
+    }
+  }
+  server.send(400, "text/plain", "Bad Request");
+}
+
+void handleCalibrate() {
+  if (server.hasArg("servo") && server.hasArg("minUs") && server.hasArg("maxUs")) {
+    int servoNum = server.arg("servo").toInt();
+    int minUs = server.arg("minUs").toInt();
+    int maxUs = server.arg("maxUs").toInt();
+    if (servoNum >= 0 && servoNum < 16) {
+      servoMinUs[servoNum] = minUs;
+      servoMaxUs[servoNum] = maxUs;
+      server.send(200, "text/plain", "OK");
+      return;
+    }
+  }
+  server.send(400, "text/plain", "Bad Request");
+}
+
 void handleSet() {
   if (server.hasArg("servo") && server.hasArg("angle")) {
     int servoNum = server.arg("servo").toInt();
@@ -210,9 +353,7 @@ void handleSet() {
     
     // Ensure bounds
     if (servoNum >= 0 && servoNum < 16 && angle >= 0 && angle <= 180) {
-      // Map angle to pulse length
-      uint16_t pulse = map(angle, 0, 180, SERVOMIN, SERVOMAX);
-      pwm.setPWM(servoNum, 0, pulse);
+      setCalibratedAngle(servoNum, angle);
       
       // Update OLED
       lastServo = servoNum;
@@ -229,8 +370,8 @@ void handleSet() {
 void setup() {
   Serial.begin(115200);
 
-  // Initialize I2C pins D21=SDA, D22=SCL
-  Wire.begin(6, 7);
+  // Initialize I2C pins D6=SDA, D7=SCL
+  Wire.begin(21, 22);
 
   // Initialize OLED
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
@@ -247,7 +388,7 @@ void setup() {
 
   // Initialize PCA9685
   pwm.begin();
-  pwm.setOscillatorFrequency(27000000);
+  //pwm.setOscillatorFrequency(27000000);
   pwm.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
 
   // Set all 16 servos to 90 degrees initially
@@ -281,6 +422,8 @@ void setup() {
   // Setup Web Server Routes
   server.on("/", handleRoot);
   server.on("/set", handleSet);
+  server.on("/setUs", handleSetUs);
+  server.on("/calibrate", handleCalibrate);
   server.begin();
   Serial.println("HTTP server started");
 
