@@ -33,6 +33,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 int lastServo = -1;
 int lastAngle = 90;
 int servoMinUs[16] = {500,500,500,500,500,500,500,500,500,500,500,500,500,500,500,500};
+int masterLink[16] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
 int servoMaxUs[16] = {2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400,2400};
 
 // HTML content for the modern web UI
@@ -65,29 +66,49 @@ const char index_html[] PROGMEM = R"rawliteral(
     .panel { display: none; }
     .panel.active { display: block; }
     .cal-label { font-size: 0.8rem; color: #888; text-align: left; margin-top: 10px; }
+    .master-select { margin-bottom: 15px; text-align: left; }
+    .master-select label { font-size: 0.8rem; color: #888; margin-right: 5px; }
+    .master-select select { background-color: #333; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 4px; }
   </style>
   <script>
-    var lastSendTime = 0;
-    var pendingRequest = null;
+    var lastSendTimes = {};
+    var pendingRequests = {};
     
+    function updateMaster(servoId, masterId) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "/setMaster?servo=" + servoId + "&master=" + masterId, true);
+      xhr.send();
+    }
+
     function updateServo(servoId) {
       var slider = document.getElementById("slider" + servoId);
       var val = slider.value;
       document.getElementById("val" + servoId).value = val;
       
+      // Update UI for any followers
+      for(var i=0; i<16; i++) {
+        var sel = document.getElementById("masterSelect" + i);
+        if(sel && sel.value == servoId) {
+          document.getElementById("slider" + i).value = val;
+          document.getElementById("val" + i).value = val;
+        }
+      }
+      
       var now = Date.now();
-      if (now - lastSendTime > 50) { // Limit to 20 requests per second
+      if (!lastSendTimes[servoId]) lastSendTimes[servoId] = 0;
+      
+      if (now - lastSendTimes[servoId] > 50) { // Limit to 20 requests per second per servo
         sendRequest(servoId, val);
       } else {
-        clearTimeout(pendingRequest);
-        pendingRequest = setTimeout(function() {
+        if (pendingRequests[servoId]) clearTimeout(pendingRequests[servoId]);
+        pendingRequests[servoId] = setTimeout(function() {
           sendRequest(servoId, val);
         }, 50);
       }
     }
     
     function sendRequest(servoId, val) {
-      lastSendTime = Date.now();
+      lastSendTimes[servoId] = Date.now();
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/set?servo=" + servoId + "&angle=" + val, true);
       xhr.send();
@@ -183,6 +204,17 @@ void handleRoot() {
     html += "<button id=\"btn-angle-" + id + "\" class=\"mode-btn active\" onclick=\"toggleMode(" + id + ", 'angle')\">Angle</button>";
     html += "<button id=\"btn-cal-" + id + "\" class=\"mode-btn\" onclick=\"toggleMode(" + id + ", 'cal')\">Calibrate</button>";
     html += "</div>";
+
+    html += "<div class=\"master-select\">";
+    html += "<label>Follow:</label>";
+    html += "<select id=\"masterSelect" + id + "\" onchange=\"updateMaster(" + id + ", this.value)\">";
+    html += "<option value=\"-1\">None</option>";
+    for(int m=0; m<16; m++) {
+      if (m != i) {
+        html += "<option value=\"" + String(m) + "\">Servo " + String(m) + "</option>";
+      }
+    }
+    html += "</select></div>";
 
     html += "<div id=\"panel-angle-" + id + "\" class=\"panel active\">";
     html += "<input type=\"range\" min=\"0\" max=\"180\" value=\"90\" class=\"slider\" id=\"slider" + id + "\" oninput=\"updateServo(" + id + ")\">";
@@ -346,6 +378,19 @@ void handleCalibrate() {
   server.send(400, "text/plain", "Bad Request");
 }
 
+void handleSetMaster() {
+  if (server.hasArg("servo") && server.hasArg("master")) {
+    int servoNum = server.arg("servo").toInt();
+    int masterNum = server.arg("master").toInt();
+    if (servoNum >= 0 && servoNum < 16 && masterNum >= -1 && masterNum < 16) {
+      masterLink[servoNum] = masterNum;
+      server.send(200, "text/plain", "OK");
+      return;
+    }
+  }
+  server.send(400, "text/plain", "Bad Request");
+}
+
 void handleSet() {
   if (server.hasArg("servo") && server.hasArg("angle")) {
     int servoNum = server.arg("servo").toInt();
@@ -354,6 +399,13 @@ void handleSet() {
     // Ensure bounds
     if (servoNum >= 0 && servoNum < 16 && angle >= 0 && angle <= 180) {
       setCalibratedAngle(servoNum, angle);
+      
+      // Also update any followers physically
+      for(int i=0; i<16; i++) {
+        if(masterLink[i] == servoNum) {
+          setCalibratedAngle(i, angle);
+        }
+      }
       
       // Update OLED
       lastServo = servoNum;
@@ -423,6 +475,7 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/set", handleSet);
   server.on("/setUs", handleSetUs);
+  server.on("/setMaster", handleSetMaster);
   server.on("/calibrate", handleCalibrate);
   server.begin();
   Serial.println("HTTP server started");
