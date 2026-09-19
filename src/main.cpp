@@ -141,6 +141,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       var slider = document.getElementById(type + "Slider" + servoId);
       var val = slider.value;
       document.getElementById(type + "Val" + servoId).value = val;
+      var minVal = parseInt(document.getElementById("minSlider" + servoId).value);
+      var maxVal = parseInt(document.getElementById("maxSlider" + servoId).value);
+      var centerVal = Math.round((minVal + maxVal) / 2);
+      var centerEl = document.getElementById("centerVal" + servoId);
+      if(centerEl) centerEl.innerText = centerVal;
       var now = Date.now();
       if (!lastSendTimes[servoId]) lastSendTimes[servoId] = 0;
       if (now - lastSendTimes[servoId] > 50) {
@@ -245,6 +250,12 @@ void handleRoot() {
     html += "<button class=\"btn\" onclick=\"stepUs(" + id + ", 'min', 10)\">&gt;&gt;</button>";
     html += "</div>";
     
+    int currentCenter = (currentMin + currentMax) / 2;
+    html += "<div class=\"center-group\" style=\"text-align: center; margin: 10px 0; background: #333; padding: 5px; border-radius: 4px;\">";
+    html += "<span class=\"cal-label\" style=\"margin-right: 10px;\">Center: <span id=\"centerVal" + id + "\" style=\"color:var(--primary); font-weight:bold;\">" + String(currentCenter) + "</span> us</span>";
+    html += "<button class=\"btn\" onclick=\"centerServo(" + id + ")\">Go to Center</button>";
+    html += "</div>";
+
     html += "<div class=\"cal-label\">Max Pulse (us) - 180&deg;</div>";
     html += "<input type=\"range\" min=\"2000\" max=\"3000\" value=\"" + String(currentMax) + "\" class=\"slider\" id=\"maxSlider" + id + "\" oninput=\"updateUs(" + id + ", 'max')\">";
     html += "<div class=\"step-group\">";
