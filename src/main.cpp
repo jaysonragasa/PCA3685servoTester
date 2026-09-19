@@ -142,16 +142,17 @@ const char index_html[] PROGMEM = R"rawliteral(
       var val = slider.value;
       document.getElementById(type + "Val" + servoId).value = val;
       var now = Date.now();
-      if (now - lastSendTime > 50) {
+      if (!lastSendTimes[servoId]) lastSendTimes[servoId] = 0;
+      if (now - lastSendTimes[servoId] > 50) {
         sendUsRequest(servoId, val);
       } else {
-        clearTimeout(pendingRequest);
-        pendingRequest = setTimeout(function() { sendUsRequest(servoId, val); }, 50);
+        if (pendingRequests[servoId]) clearTimeout(pendingRequests[servoId]);
+        pendingRequests[servoId] = setTimeout(function() { sendUsRequest(servoId, val); }, 50);
       }
     }
     
     function sendUsRequest(servoId, val) {
-      lastSendTime = Date.now();
+      lastSendTimes[servoId] = Date.now();
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/setUs?servo=" + servoId + "&us=" + val, true);
       xhr.send();
