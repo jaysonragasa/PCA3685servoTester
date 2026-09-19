@@ -180,6 +180,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       updateUs(servoId, type);
     }
     
+
+    function centerServo(servoId) {
+      var minVal = parseInt(document.getElementById("minSlider" + servoId).value);
+      var maxVal = parseInt(document.getElementById("maxSlider" + servoId).value);
+      var centerVal = Math.round((minVal + maxVal) / 2);
+      var centerEl = document.getElementById("centerVal" + servoId);
+      if(centerEl) centerEl.innerText = centerVal;
+      sendUsRequest(servoId, centerVal);
+    }
     function saveCalibration(servoId) {
       var minUs = document.getElementById("minSlider" + servoId).value;
       var maxUs = document.getElementById("maxSlider" + servoId).value;
